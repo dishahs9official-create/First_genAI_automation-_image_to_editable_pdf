@@ -1,0 +1,477 @@
+{
+  "name": "Image -> Editable PDF (ChatGPT mask || ABBYY OCR + style/color)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Image → Editable PDF",
+        "formDescription": "Upload a raster image (PNG, JPG, JPEG, TIFF, BMP, WEBP). You'll get back a PDF with the text removed from the background and a selectable/editable text layer.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "data",
+              "fieldType": "file",
+              "acceptFileTypes": ".png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "70f7506e-fcba-4588-91f5-df27ee94cc16",
+      "name": "On form submission",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        3744,
+        336
+      ],
+      "webhookId": "REPLACE_WITH_YOUR_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const Jimp = require('jimp');\nconst item = $input.item;\nconst b = item.binary || {};\n// Form Trigger stores the uploaded file under the field label; grab data / data_0 / first key.\nconst key = b.data ? 'data' : (b.data_0 ? 'data_0' : Object.keys(b)[0]);\nif (!key) throw new Error('No uploaded file found. Upload an image in the form field \"data\".');\nconst img = await Jimp.read(Buffer.from(b[key].data, 'base64'));\nconst origW = img.bitmap.width, origH = img.bitmap.height;\nconst pngBuf = await img.getBufferAsync(Jimp.MIME_PNG);\nitem.binary = { data: { data: pngBuf.toString('base64'), mimeType: 'image/png', fileName: 'input.png' } };\nitem.json = { origW, origH };\nreturn item;"
+      },
+      "id": "d1b391aa-63fc-4da5-afcf-494e0715ea27",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3952,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const Jimp = require('jimp');\nconst item = $input.item;\nconst img = await Jimp.read(Buffer.from(item.binary.data.data, 'base64'));\nconst out = img.resize(1024, 1024);\nconst buf = await out.getBufferAsync(Jimp.MIME_PNG);\nitem.binary = { image: { data: buf.toString('base64'), mimeType: 'image/png', fileName: 'image.png' } };\nitem.json = { targetW: 1024, targetH: 1024 };\nreturn item;"
+      },
+      "id": "2c835a2f-2bf1-40a1-8018-038fbeb46e88",
+      "name": "Resize1024",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4192,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/edits",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-image-1.5"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "image",
+              "inputDataFieldName": "image"
+            },
+            {
+              "name": "prompt",
+              "value": "Remove ALL visible text from this image. Reconstruct the background underneath the removed text naturally by continuing the surrounding colors, gradients, and textures. Do not add any text. Do not alter, move, restyle, or recolor any logos, illustrations, photographs, shapes, or layout. The output must contain no readable text anywhere."
+            },
+            {
+              "name": "size",
+              "value": "1024x1024"
+            },
+            {
+              "name": "quality",
+              "value": "medium"
+            },
+            {
+              "name": "n",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "a0dc6e1f-d99e-45dd-bf0f-02f43f9ce870",
+      "name": "OpenAI Edit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4432,
+        112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const { PDFDocument } = require('pdf-lib');\nconst item = $input.item;\nconst pngBuf = Buffer.from(item.binary.data.data, 'base64');\nconst pdf = await PDFDocument.create();\nconst png = await pdf.embedPng(pngBuf);\nconst page = pdf.addPage([png.width, png.height]);\npage.drawImage(png, { x: 0, y: 0, width: png.width, height: png.height });\nconst bytes = await pdf.save();\nitem.binary = { data: { data: Buffer.from(bytes).toString('base64'), mimeType: 'application/pdf', fileName: 'original.pdf' } };\nitem.json = {};\nreturn item;"
+      },
+      "id": "90a17dce-42b5-4d0b-be5c-64cf275c4c07",
+      "name": "Image to PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4192,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://cloud-eu.ocrsdk.com/v2/processImage?exportFormat=xml&profile=documentConversion&xml:writeFormatting=true&imageSource=auto",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "c2028939-5c83-430f-82c1-999d86b7140c",
+      "name": "ABBYY Submit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4432,
+        496
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Abbyy"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "id": "076ad419-b968-4d4b-89b2-8b36a714e507",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4672,
+        496
+      ],
+      "webhookId": "REPLACE_WITH_YOUR_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "url": "https://cloud-eu.ocrsdk.com/v2/getTaskStatus?taskId={{ $('ABBYY Submit').first().json.taskId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "id": "a7a00fa7-d0fa-41b9-a534-e3e5c62a8fb2",
+      "name": "GetStatus",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4896,
+        496
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Vectorize"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "Completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3ccca8f4-9f4c-4d2c-8ff4-95f4bd92c755",
+      "name": "IF Completed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5120,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.resultUrls[0] }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "2f286047-05ed-491b-ac91-e706dc0eec04",
+      "name": "Download XML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5344,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Best-effort ABBYY XML parser (with xml:writeFormatting=true) + pixel color sampling.\n// ADJUST the regex tag/attribute names to match YOUR ABBYY response if it differs.\nconst Jimp = require('jimp');\n\nfunction attr(s, n){ const m = s.match(new RegExp(n + '=\"([^\"]*)\"')); return m ? m[1] : null; }\n\nfunction sampleColor(img, x, y, w, h){\n  const W = img.bitmap.width, H = img.bitmap.height;\n  x = Math.max(0, Math.floor(x)); y = Math.max(0, Math.floor(y));\n  w = Math.min(W - x, Math.ceil(w)); h = Math.min(H - y, Math.ceil(h));\n  if (w <= 0 || h <= 0) return { r: 0, g: 0, b: 0 };\n  const corners = [[x,y],[x+w-1,y],[x,y+h-1],[x+w-1,y+h-1]];\n  let br=0, bgc=0, bb=0;\n  for (const [cx,cy] of corners){ const c = Jimp.intToRGBA(img.getPixelColor(cx,cy)); br+=c.r; bgc+=c.g; bb+=c.b; }\n  br/=4; bgc/=4; bb/=4;\n  const px = [];\n  const step = Math.max(1, Math.floor(Math.sqrt((w*h)/400)));\n  for (let yy=y; yy<y+h; yy+=step) for (let xx=x; xx<x+w; xx+=step){\n    const c = Jimp.intToRGBA(img.getPixelColor(xx,yy));\n    const d = Math.abs(c.r-br) + Math.abs(c.g-bgc) + Math.abs(c.b-bb);\n    px.push({ c, d });\n  }\n  if (!px.length) return { r:0, g:0, b:0 };\n  px.sort((a,b)=> b.d - a.d);\n  const top = px.slice(0, Math.max(1, Math.floor(px.length*0.25)));\n  let r=0,g=0,b=0; for (const p of top){ r+=p.c.r; g+=p.c.g; b+=p.c.b; }\n  const n = top.length; return { r:Math.round(r/n), g:Math.round(g/n), b:Math.round(b/n) };\n}\n\nconst xml = $json.data || $json.body || (typeof $json === 'string' ? $json : '');\nconst norm = $('Normalize').first();\nconst origImg = await Jimp.read(Buffer.from(norm.binary.data.data, 'base64'));\nconst origW = norm.json.origW, origH = norm.json.origH;\n\nconst words = [];\nconst fmtRe = /<formatting\\b([^>]*)>([\\s\\S]*?)<\\/formatting>/g;\nlet fm;\nwhile ((fm = fmtRe.exec(xml))){\n  const fa = fm[1];\n  let inner = fm[2];\n  const ff = attr(fa, 'ff');\n  const fs = parseFloat(attr(fa, 'fs') || '0');\n  const bold = /bold=\"(1|true)\"/i.test(fa);\n  const italic = /italic=\"(1|true)\"/i.test(fa);\n  // normalize self-closing (space) charParams into an empty word break\n  inner = inner.replace(/<charParams\\b[^>]*\\/>/g, '<charParams> </charParams>');\n  const cpRe = /<charParams\\b([^>]*)>([\\s\\S]*?)<\\/charParams>/g;\n  let cp, cur = null;\n  const flush = () => {\n    if (cur && cur.text.trim()){\n      const col = sampleColor(origImg, cur.l, cur.t, cur.r - cur.l, cur.b - cur.t);\n      words.push({ text: cur.text, x: cur.l, y: cur.t, w: cur.r - cur.l, h: cur.b - cur.t,\n                   fontSize: fs || null, ff, bold, italic, color: col });\n    }\n    cur = null;\n  };\n  while ((cp = cpRe.exec(inner))){\n    const ca = cp[1], ch = cp[2];\n    const l = +attr(ca,'l'), t = +attr(ca,'t'), r = +attr(ca,'r'), b = +attr(ca,'b');\n    if (!ch || /^\\s*$/.test(ch)){ flush(); continue; }\n    if (!cur) cur = { text: '', l, t, r, b };\n    cur.text += ch;\n    cur.l = Math.min(cur.l, l); cur.t = Math.min(cur.t, t);\n    cur.r = Math.max(cur.r, r); cur.b = Math.max(cur.b, b);\n  }\n  flush();\n}\nreturn [{ json: { words, origW, origH, wordCount: words.length } }];"
+      },
+      "id": "df147bbe-3f53-4044-b631-3653677b81db",
+      "name": "Parse ABBYY XML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5552,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "890cae11-6a8d-4a2c-adc5-51b4d7514c82",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        5792,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');\nconst Jimp = require('jimp');\n\nconst bgResp = $('OpenAI Edit').first().json;\nconst bgB64 = bgResp && bgResp.data && bgResp.data[0] && bgResp.data[0].b64_json;\nif (!bgB64) throw new Error('No background from OpenAI: ' + JSON.stringify(bgResp).slice(0,300));\n\nconst p = $('Parse ABBYY XML').first().json;\nconst words = p.words || [];\nconst W = p.origW, H = p.origH;\n\n// upscale the 1024 background back to original size so it aligns with OCR coordinates\nconst up = (await Jimp.read(Buffer.from(bgB64, 'base64'))).resize(W, H);\nconst bgBuf = await up.getBufferAsync(Jimp.MIME_PNG);\n\nconst pdf = await PDFDocument.create();\nconst page = pdf.addPage([W, H]);\nconst bg = await pdf.embedPng(bgBuf);\npage.drawImage(bg, { x: 0, y: 0, width: W, height: H });\n\nconst cache = {};\nasync function font(name){ if (!cache[name]) cache[name] = await pdf.embedFont(StandardFonts[name]); return cache[name]; }\nfunction pick(ff, bold, italic){\n  const f = (ff || '').toLowerCase();\n  let fam = 'H';\n  if (/times|serif|georgia|roman|minion|garamond/.test(f)) fam = 'T';\n  else if (/courier|mono|consol/.test(f)) fam = 'C';\n  if (fam === 'H') return bold&&italic?'HelveticaBoldOblique':bold?'HelveticaBold':italic?'HelveticaOblique':'Helvetica';\n  if (fam === 'T') return bold&&italic?'TimesRomanBoldItalic':bold?'TimesRomanBold':italic?'TimesRomanItalic':'TimesRoman';\n  return bold&&italic?'CourierBoldOblique':bold?'CourierBold':italic?'CourierOblique':'Courier';\n}\n\nfor (const wd of words){\n  const t = (wd.text || '').trim();\n  if (!t) continue;\n  const fnt = await font(pick(wd.ff, wd.bold, wd.italic));\n  let size = Math.max(4, wd.h * 0.85);\n  const tw = fnt.widthOfTextAtSize(t, size);\n  if (tw > wd.w && tw > 0) size = Math.max(3, size * (wd.w / tw));\n  const c = wd.color || { r:0, g:0, b:0 };\n  try {\n    page.drawText(t, { x: wd.x, y: H - wd.y - wd.h * 0.85, size, font: fnt,\n                       color: rgb(c.r/255, c.g/255, c.b/255) });\n  } catch (e) { /* skip unencodable glyphs */ }\n}\n\nconst bytes = await pdf.save();\nconst item = $input.item;\nitem.binary = { pdf: { data: Buffer.from(bytes).toString('base64'), mimeType: 'application/pdf', fileName: 'output.pdf' } };\nitem.json = { ok: true, words: words.length };\nreturn item;"
+      },
+      "id": "479ba7c7-fe38-4a50-b2be-8583ff26df36",
+      "name": "Build PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6016,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "returnBinary",
+        "completionTitle": "Your PDF is ready",
+        "completionMessage": "Your editable PDF has been generated and downloaded.",
+        "inputDataFieldName": "pdf",
+        "options": {}
+      },
+      "id": "bb8d356a-10d1-4445-821c-e43a00701d2e",
+      "name": "Form Ending",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        6240,
+        256
+      ],
+      "webhookId": "REPLACE_WITH_YOUR_WEBHOOK_ID"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Image to PDF",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Resize1024",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resize1024": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Edit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Edit": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image to PDF": {
+      "main": [
+        [
+          {
+            "node": "ABBYY Submit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ABBYY Submit": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "GetStatus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetStatus": {
+      "main": [
+        [
+          {
+            "node": "IF Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Completed": {
+      "main": [
+        [
+          {
+            "node": "Download XML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download XML": {
+      "main": [
+        [
+          {
+            "node": "Parse ABBYY XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse ABBYY XML": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Build PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build PDF": {
+      "main": [
+        [
+          {
+            "node": "Form Ending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "nodeGroups": [],
+  "tags": []
+}
