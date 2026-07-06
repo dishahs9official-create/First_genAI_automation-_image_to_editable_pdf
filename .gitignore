@@ -1,0 +1,19 @@
+# Secrets — never commit
+.env
+.env.*
+*credentials*.json
+*.credentials.json
+ 
+# n8n local data
+.n8n/
+database.sqlite
+ 
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+ 
+# Node (if you add tooling)
+node_modules/
+ 
