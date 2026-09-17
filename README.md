@@ -2,7 +2,7 @@
 
 An [n8n](https://n8n.io) workflow that takes a raster image and returns a PDF where
 the original text has been removed from the background and replaced with a
-selectable/editable text layer.
+selectable/editable text layer
 
 ## How it works
 
