@@ -5,7 +5,7 @@ the original text has been removed from the background and replaced with a
 selectable/editable text layer.
 
 ## How it works
-jtxrut 
+
 1. **Form Trigger** – user uploads an image (PNG, JPG, JPEG, TIFF, BMP, WEBP).
 2. **Normalize** – converts the upload to PNG and records original dimensions.
 3. Two branches run in parallel:
